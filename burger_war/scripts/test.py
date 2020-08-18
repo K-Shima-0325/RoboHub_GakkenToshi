@@ -550,7 +550,7 @@ class TofuBot():
 
             else:
                 if self.my_side != "b":
-                    active_flag = self.Rotue_Strategy_2_redside(route_state)
+                    active_flag = self.Rotue_Strategy_1_redside(route_state)
                 else:
                     active_flag = self.Rotue_Strategy_1_blueside(route_state)
                 
@@ -581,11 +581,11 @@ class TofuBot():
         elif state == 3:
             return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,PI/2)
         elif state == 4:
-            return 0
+            return self.setGoal(-0.53, 0, 0)
         elif state == 5:
             return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_DOWN)
         elif state == 6:
-            return 0
+            return self.setGoal(0,-0.53, 0)
         elif state == 7:        
             return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_DOWN)
         elif state == 8:
@@ -599,15 +599,55 @@ class TofuBot():
         elif state == 12:
             return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
         elif state == 13:
-            return 0
+            return self.setGoal(0,0.53,PI)
         elif state == 14:    
-            return 0
+            return self.setGoal(-0.53, 0,PI)
         elif state == 15:
-            return 0
+            return self.setGoal(-0.90, 0,PI)
         elif state == 16:
             return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN, 0.2)
         elif state == 17:
             return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/2)
+        else:
+            return 0
+
+    def Rotue_Strategy_1_blueside(self, state):        
+        if state == 0:
+            return self.setGoal(0.9,0.2,3*PI/4) 
+        elif state == 1:
+            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_UP, 0.2)
+        elif state == 2:
+            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
+        elif state == 3:
+            return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/2)
+        elif state == 4:
+            return self.setGoal(0.53, 0, PI)
+        elif state == 5:
+            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_UP)
+        elif state == 6:
+            return self.setGoal(0, 0.53, PI)
+        elif state == 7:        
+            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_UP)
+        elif state == 8:
+            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_LEFT)
+        elif state == 9:
+            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
+        elif state == 10:
+            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN)
+        elif state == 11:
+            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_RIGHT)
+        elif state == 12:
+            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP)
+        elif state == 13:
+            return self.setGoal(0,-0.53, 0)
+        elif state == 14:    
+            return self.setGoal(0.53, 0, 0)
+        elif state == 15:
+            return self.setGoal(0.90, 0, 0)
+        elif state == 16:
+            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP, 0.2)
+        elif state == 17:
+            return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,PI/2)
         else:
             return 0
 
@@ -644,46 +684,6 @@ class TofuBot():
             return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_UP)
         elif state == 15:
             return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/2)
-        else:
-            return 0
-
-    def Rotue_Strategy_1_blueside(self, state):        
-        if state == 0:
-            return self.setGoal(-0.2,0.9,-PI/4) 
-        elif state == 1:
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_UP, 0.2)
-        elif state == 2:
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN)
-        elif state == 3:
-            return self.setGoal(self.odom_pose_x, self.odom_pose_y,0)
-        elif state == 4:
-            return self.setGoal(0,0.53,-PI/2)
-        elif state == 5:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_UP)
-        elif state == 6:
-            return self.setGoal(-0.53,0,-PI/2)
-        elif state == 7:        
-            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP)
-        elif state == 8:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_LEFT)
-        elif state == 9:
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN)
-        elif state == 10:
-            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
-        elif state == 11:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_RIGHT)
-        elif state == 12:
-            return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_UP)
-        elif state == 13:
-            return self.setGoal(0.53,0,PI/2)
-        elif state == 14:    
-            return self.setGoal(0,0.53,PI/2)
-        elif state == 15:
-            return self.setGoal(0,0.90,PI/2)
-        elif state == 16:
-            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_UP, 0.2)
-        elif state == 17:
-            return self.setGoal(self.init_x, self.init_y,0)
         else:
             return 0
 
