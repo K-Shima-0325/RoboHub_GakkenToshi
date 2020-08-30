@@ -42,6 +42,11 @@ PI = math.pi
 #Set TurtleBot3 Burger Specification
 BURGER_MAX_VELOCITY = 0.22 #[m/s]
 BURGER_MAX_ROTATE_V = 2.84 #[rad/s]
+BURGER_RADIUS = 0.113 #[m]
+
+#
+FIELD_WIDTH_X = 1.697 #[m]
+FIELD_WIDTH_Y = 1.697 #[m]
 
 #Set Marker definition 
 CENTER_BLOCK = 0
@@ -51,8 +56,11 @@ CORNER_BLOCK_3 = 3
 CORNER_BLOCK_4 = 4
 
 CENTER_BLOCK_WIDTH = 0.350
+CENTER_BLOCK_RADIUS = 0.247
+
 CORNER_BLOCK_WIDTH_X = 0.150
 CORNER_BLOCK_WIDTH_Y = 0.200
+CORNER_BLOCK_RADIUS = 0.125
 
 CENTER_BLOCK_POS_X = 0
 CENTER_BLOCK_POS_Y = 0
@@ -67,10 +75,29 @@ CORNER_BLOCK_3_POS_Y = -CORNER_BLOCK_POS
 CORNER_BLOCK_4_POS_X =  CORNER_BLOCK_POS
 CORNER_BLOCK_4_POS_Y = -CORNER_BLOCK_POS
 
-MARKER_UP    = 1
-MARKER_DOWN  = 2
+MARKER_UP    = 1  #Blue side
+MARKER_DOWN  = 2  #Red side
 MARKER_RIGHT = 3
 MARKER_LEFT  = 4
+
+FIELD_AREA_BLUE_LU1 = 1 #Blue Left Up side 1
+FIELD_AREA_BLUE_LL1 = 2
+FIELD_AREA_RED_LL1  = 3
+FIELD_AREA_RED_LD1  = 4
+FIELD_AREA_RED_RD1  = 5 #Red Right Down side 1
+FIELD_AREA_RED_RR1  = 6
+FIELD_AREA_BLUE_RR1 = 7 
+FIELD_AREA_BLUE_RU1 = 8
+FIELD_AREA_BLUE_LU2 = 9 #Blue Left Up side 2
+FIELD_AREA_BLUE_LL2 = 10
+FIELD_AREA_RED_LL2  = 11
+FIELD_AREA_RED_LD2  = 12
+FIELD_AREA_RED_RD2  = 13 #Red Right Down side 2
+FIELD_AREA_RED_RR2  = 14
+FIELD_AREA_BLUE_RR2 = 15 
+FIELD_AREA_BLUE_RU2 = 16
+FIELD_OUTER_AREA = -1
+
 #/Set Marker definition 
 
 SIMPLE_GOAL_STATE_PENDING = 0
@@ -83,6 +110,213 @@ ROTATE_CW  = -1
 FUNC_STATE_ERROR = -1
 FUNC_STATE_ACTIVE = 0
 FUNC_STATE_DONE = 1
+
+BOT_MODE_STOP = 0
+BOT_MODE_PATROL = 1
+BOT_MODE_RUNAWAY = 2
+BOT_MODE_HUNTING = 3
+
+PATROL_ROTE_CCW = 1
+PATROL_ROTE_CW  = -1
+
+def JudgeFieldArea(x, y):
+    if -CORNER_BLOCK_POS < x < CORNER_BLOCK_POS and -CORNER_BLOCK_POS < y < CORNER_BLOCK_POS:
+        if x >= 0: 
+            if y >= 0:
+                if y <= x:
+                    return FIELD_AREA_BLUE_LU1
+                else: #y > x
+                    return FIELD_AREA_BLUE_LL1
+            else: # y < 0
+                if y >= -x:
+                    return FIELD_AREA_BLUE_RU1
+                else: #y < -x
+                    return FIELD_AREA_BLUE_RR1
+        else: # x < 0
+            if y >= 0:
+                if y <= -x:
+                    return FIELD_AREA_RED_LD1
+                else: #y > -x
+                    return FIELD_AREA_RED_LL1
+            else: # y < 0
+                if y >= x:
+                    return FIELD_AREA_RED_RD1
+                else: #y < x
+                    return FIELD_AREA_RED_RR1 
+    else:
+        if x >= 0: 
+            if y >= 0:
+                if y <= x:
+                    return FIELD_AREA_BLUE_LU2
+                else: #y > x
+                    return FIELD_AREA_BLUE_LL2
+            else: # y < 0
+                if y >= -x:
+                    return FIELD_AREA_BLUE_RU2
+                else: #y < -x
+                    return FIELD_AREA_BLUE_RR2
+        else: # x < 0
+            if y >= 0:
+                if y <= -x:
+                    return FIELD_AREA_RED_LD2
+                else: #y > -x
+                    return FIELD_AREA_RED_LL2
+            else: # y < 0
+                if y >= x:
+                    return FIELD_AREA_RED_RD2
+                else: #y < x
+                    return FIELD_AREA_RED_RR2     
+   
+
+class EnemyDetector:
+
+    def __init__(self):
+        self.max_distance = 1.2 # about 3.4 FIELD_WIDTH_X * 2 
+        self.min_distance = BURGER_RADIUS     # about 0.11
+        self.thresh_offset = 0.3
+        self.thresh_corner = CORNER_BLOCK_WIDTH_X / 2 + BURGER_RADIUS + self.thresh_offset #about 0.188 + 
+        self.thresh_center = CENTER_BLOCK_WIDTH / 2 + BURGER_RADIUS + self.thresh_offset   #about 0.288 +
+        self.thresh_field = FIELD_WIDTH_Y - BURGER_RADIUS - self.thresh_offset             #about 1.584 -
+        self.thresh_enemy_point = 5
+        self.max_enemy_point = 30
+
+        self.pose_x = 0
+        self.pose_y = 0
+        self.th = 0
+        self.pre_th = 0
+        self.thresh_th = 0.01746 #[rad] about 1.0 deg
+    
+        self.near_scan = 0
+        self.pre_near_scan = 0
+        self.thresh_d = 0.1 #[m]
+
+    def findEnemy(self, scan, pose_x, pose_y, th):
+        '''
+        input scan. list of lider range, robot locate(pose_x, pose_y, th)
+        return is_near_enemy(BOOL), enemy_direction[rad](float)
+        '''
+        if not len(scan) == 360:
+            return False
+        
+        #for i, x in  enumerate(scan):
+            #rospy.loginfo("Dir: {}, Dist: {}".format(i, x))
+
+        # update pose
+        self.pre_th = self.th
+        self.pose_x = pose_x
+        self.pose_y = pose_y
+        self.th = th
+
+        # drop too big and small value ex) 0.0 , 2.0 
+        self.pre_near_scan = self.near_scan
+        self.near_scan = [x if self.max_distance > x > self.min_distance else 0.0 for x in scan]
+
+        if -self.thresh_th < (self.th - self.pre_th) < self.thresh_th:
+            for i in range(len(scan)):
+                if -self.thresh_d < (self.near_scan[i] - self.pre_near_scan[i]) < self.thresh_d:
+                    self.near_scan[i] = 0.0
+
+        enemy_scan = [1 if self.is_point_emnemy(x,i) else 0 for i,x in enumerate(self.near_scan)]
+
+        cnt_start = 0
+        cnt_finish = 0
+        enemy_candidate = 0
+
+        for i in range(len(scan)):
+            if   enemy_scan[0] == 1:
+                for j in range(len(scan), 0):
+                    if enemy_scan[j] == 1:
+                        cnt_start -= 1
+                    else:
+                        break
+            elif enemy_scan[i] == 1 and cnt_start == 0:
+                cnt_start = i
+            elif enemy_scan[i] == 0 and cnt_start != 0:
+                cnt_finish = i
+            elif enemy_scan[len(scan)-1] == 1 and cnt_start != 0:
+                cnt_finish = i
+
+            if cnt_finish != 0:
+                if self.thresh_enemy_point < (cnt_finish - cnt_start) < self.max_enemy_point:
+                    enemy_candidate += 1
+                else:
+                    if cnt_start < 0:
+                        for j in range(len(scan), len(scan) + cnt_start):
+                            enemy_scan[j] = 0
+                        cnt_start = 0
+
+                    for j in range(cnt_start, cnt_finish):
+                        enemy_scan[j] = 0
+                cnt_start = 0
+            
+            cnt_finish = 0
+
+        if enemy_candidate == 1:
+            is_near_enemy = True
+        else:
+            is_near_enemy = False
+ 
+        if is_near_enemy:
+            idx_l = [i for i, x in enumerate(enemy_scan) if x == 1]
+            idx = idx_l[len(idx_l)/2]
+            enemy_direction = idx / 360.0 * 2*PI
+            enemy_dist = self.near_scan[idx]
+            
+            for i in range(len(idx_l)):
+                 rospy.loginfo("idx: {}, Dir: {}[deg], Dist: {}[m]".format(i, idx_l[i], self.near_scan[idx_l[i]]))
+                 rospy.loginfo("point_x: {}, point_y: {}".format(self.pose_x + self.near_scan[idx_l[i]] * math.cos(self.th + idx_l[i] / 360.0 * 2*PI), self.pose_y + self.near_scan[idx_l[i]] * math.sin(self.th + idx_l[i] / 360.0 * 2*PI)))
+            rospy.loginfo("My_Pos_x: {}, My_Pos_y: {}".format(self.pose_x, self.pose_y))
+            rospy.loginfo("My_Pos_dir: {}".format(self.th/2/PI*360))
+            rospy.loginfo("Enemy_Dir: {}, Enemy_Dist: {}".format(enemy_direction, enemy_dist))
+            rospy.loginfo("Enemy_x: {}, Enemy_y: {}".format(self.pose_x + enemy_dist * math.cos(self.th + enemy_direction), self.pose_y + enemy_dist * math.sin(self.th + enemy_direction)))
+        else:
+            enemy_direction = None
+            enemy_dist = None
+
+        rospy.loginfo("enemy points {}".format(sum(enemy_scan)))
+        return is_near_enemy, enemy_direction, enemy_dist
+        
+
+    def is_point_emnemy(self, dist, ang_deg):
+        if dist == 0:
+            return False
+
+        ang_rad = ang_deg /360. * 2 * PI
+        point_x = self.pose_x + dist * math.cos(self.th + ang_rad)
+        point_y = self.pose_y + dist * math.sin(self.th + ang_rad)
+
+        #フィールド内かチェック
+        if   point_y > (-point_x + self.thresh_field):
+            return False
+        elif point_y < (-point_x - self.thresh_field):
+            return False
+        elif point_y > ( point_x + self.thresh_field):
+            return False
+        elif point_y < ( point_x - self.thresh_field):
+            return False
+
+        #フィールド内の物体でないかチェック
+        len_p1 = math.sqrt(pow((point_x - CORNER_BLOCK_1_POS_X), 2) + pow((point_y - CORNER_BLOCK_1_POS_Y), 2))
+        len_p2 = math.sqrt(pow((point_x - CORNER_BLOCK_2_POS_X), 2) + pow((point_y - CORNER_BLOCK_2_POS_Y), 2))
+        len_p3 = math.sqrt(pow((point_x - CORNER_BLOCK_3_POS_X), 2) + pow((point_y - CORNER_BLOCK_3_POS_Y), 2))
+        len_p4 = math.sqrt(pow((point_x - CORNER_BLOCK_4_POS_X), 2) + pow((point_y - CORNER_BLOCK_4_POS_Y), 2))
+        len_p5 = math.sqrt(pow(point_x  - CENTER_BLOCK_POS_X   , 2) + pow(point_y  - CENTER_BLOCK_POS_Y   , 2))
+
+        if   len_p1 < self.thresh_corner:
+            return False
+        elif len_p2 < self.thresh_corner:
+            return False
+        elif len_p3 < self.thresh_corner:
+            return False
+        elif len_p4 < self.thresh_corner:
+            return False
+        elif len_p5 < self.thresh_center:
+            return False
+        else:
+            #rospy.loginfo(point_x, point_y, self.pose_x, self.pose_y, self.th, dist, ang_deg, ang_rad)
+            #rospy.loginfo(len_p1, len_p2, len_p3, len_p4, len_p5)
+            return True
+# End Respect
 
 class TargetInfo:
     def __init__(self, name, id, point):
@@ -108,6 +342,7 @@ class TofuBot():
             self.scan = LaserScan()
             self.lidar_sub = rospy.Subscriber('scan', LaserScan, self.lidarCallback)
             self.laser = self.scan.ranges
+            self.scan_sec = 0
 
         # camera subscribver
         # please uncoment out if you use camera
@@ -145,6 +380,9 @@ class TofuBot():
         self.warstate_json = 0 
         self.my_side = "n"
 
+        #class EnemyDetector 
+        self.enemy_detector = EnemyDetector()
+
     #initialize parameter
         #odm
         self.odom_pose_x = 0
@@ -156,20 +394,57 @@ class TofuBot():
         self.amcl_pose_x = 0
         self.amcl_pose_y = 0
         self.amcl_orientation_yaw = 0
+        self.amcl_sec = 0
 
         #Bot position and direction (detrmined from all sensor data) 
-        self.bot_pos_x = 0
-        self.bot_pos_y = 0
+        self.bot_pos_x = -1.0
+        self.bot_pos_y = 0.0
         self.bot_dir = 0
+        self.bot_pos_sec = 0
+        self.bot_pre_pos_x = 0
+        self.bot_pre_pos_y = 0
+        self.bot_pre_dir = 0        
+        self.bot_pre_pos_sec = -1.0
+        self.is_initialized_pose = False
+        self.is_bot_mode = BOT_MODE_STOP        
+
         #Ballon area on Camera data
         self.S = 0
+
+        #Enemy detebt data
+        self.is_near_enemy = False
+        self.enemy_direction = None
+        self.enemy_dist = None
     #/initialize parameter
 
     # lidar scan topic call back sample
     # update lidar scan state    
     def lidarCallback(self, data):
         self.scan = data
+        scan_data = data.ranges
+        self.scan_sec = data.header.stamp.to_sec()
+        
+        #rospy.loginfo("Scan Time: {}".format(self.scan_sec))
         #rospy.loginfo(self.scan)
+        
+        #Complement position 
+        d_x   = self.bot_pos_x - self.bot_pre_pos_x
+        d_y   = self.bot_pos_y - self.bot_pre_pos_y
+        d_dir = self.bot_dir - self.bot_pre_dir
+        if (self.scan_sec - self.bot_pos_sec) > 1.0:
+            C_t = 0.5 / (self.bot_pos_sec - self.bot_pre_pos_sec)
+        else: 
+            C_t = (self.scan_sec - self.bot_pos_sec) / (self.bot_pos_sec - self.bot_pre_pos_sec)
+
+        cmpl_pos_x   = self.bot_pos_x + d_x   * C_t
+        cmpl_pos_y   = self.bot_pos_y + d_y   * C_t
+        cmpl_pos_dir = self.bot_dir   + d_dir * C_t
+        #rospy.loginfo("t1: {}, t2: {}, t3: {}".format(self.scan_sec, self.bot_pos_sec, self.bot_pre_pos_sec))
+
+        # enemy detection
+        if self.is_initialized_pose:
+            self.is_near_enemy, self.enemy_direction, self.enemy_dist = self.enemy_detector.findEnemy(scan_data, cmpl_pos_x, cmpl_pos_y, cmpl_pos_dir)
+
 
     # camera image call back sample
     # comvert image topic to opencv object and show
@@ -218,7 +493,7 @@ class TofuBot():
         #rospy.loginfo("joint_state R: {}".format(self.wheel_rot_r))
         #rospy.loginfo("joint_state L: {}".format(self.wheel_rot_l))
 
-
+    # amcl pose callback
     def poseCallback(self, data):
         '''
         pose topic from amcl localizer
@@ -230,7 +505,8 @@ class TofuBot():
         rpy = tf.transformations.euler_from_quaternion((quaternion.x, quaternion.y, quaternion.z, quaternion.w))
 
         self.amcl_orientation_yaw = rpy[2]
-        
+        self.amcl_sec = data.header.stamp.to_sec()
+        #rospy.loginfo("Pose Time: {}".format(self.amcl_sec))
 
     #--------------------------------------------------------------------#
     def warstateCallback(self, data):
@@ -249,13 +525,7 @@ class TofuBot():
             if self.warstate_json['players']['r'] == 'you':
                 #rospy.loginfo("red players : {}".format(self.warstate_json['players']['r']))
                 self.my_side = "r"
-            elif self.warstate_json['players']['b'] == 'you':
-                #rospy.loginfo("blue players : {}".format(self.warstate_json['players']['b']))
-                self.my_side = "b"
-            else:
-                self.my_side = "n"        
         #rospy.loginfo("my side : {}".format(self.my_side))
-
 
     '''
     def getInfoFromJudge(self):
@@ -315,22 +585,30 @@ class TofuBot():
         return 0            
     #--------------------------------------------------------------------#
     def getBotPosition(self):
-        self.bot_pos_x = self.amcl_pose_x 
-        self.bot_pos_y = self.amcl_pose_y
-        angle = self.amcl_orientation_yaw
-        max_loop = 10
-        for i in range(max_loop):
-            if (-PI <= angle and angle < PI):
-                break
-            elif angle < -PI:
-                angle += 2*PI
-            elif angle >= PI:
-                angle -= 2*PI
+        if self.bot_pos_sec != self.amcl_sec:
+            self.bot_pre_pos_sec = self.bot_pos_sec
+            self.bot_pre_pos_x = self.bot_pos_x
+            self.bot_pre_pos_y = self.bot_pos_y
+            self.bot_pre_dir = self.bot_dir        
+
+            self.bot_pos_sec = self.amcl_sec
+            self.bot_pos_x = self.amcl_pose_x 
+            self.bot_pos_y = self.amcl_pose_y
+            angle = self.amcl_orientation_yaw
+        
+            max_loop = 10
+            for i in range(max_loop):
+                if (-PI <= angle and angle < PI):
+                    break
+                elif angle < -PI:
+                    angle += 2*PI
+                elif angle >= PI:
+                    angle -= 2*PI
+                else:
+                    rospy.logerr("angle calculation failure")
             else:
-                rospy.logerr("angle calculation failure")
-        else:
-            rospy.logerr("angle calculation loop reach to max : {}".format(angle))
-        self.bot_dir = angle        
+                rospy.logerr("angle calculation loop reach to max : {}".format(angle))
+            self.bot_dir = angle        
 
     def stop(self):
         twist = Twist()
@@ -338,11 +616,12 @@ class TofuBot():
         twist.angular.x = 0; twist.angular.y = 0; twist.angular.z = 0
         self.vel_pub.publish(twist)
 
-    def rotate(self, target_dir, rotate_dir = 0, rotate_vel = BURGER_MAX_ROTATE_V, tolrerance_angle = (10*PI/180)):
+    def rotate(self, target_dir, rotate_dir = 0, rotate_vel = BURGER_MAX_ROTATE_V / 2, tolrerance_angle = (10*PI/180)):
         twist = Twist()
         max_loop = 10
-        Decel_range = (20*PI/180)
-        
+        Decel_range = (30.0*PI/180.0)
+                
+
         self.getBotPosition()
         diff_angle = target_dir - self.bot_dir
 
@@ -524,41 +803,99 @@ class TofuBot():
 
     
     def strategy(self):
-        r = rospy.Rate(5) # change speed 5fps
+        r = rospy.Rate(10) # change speed 10fps
         r.sleep()
-        self.init_x = self.amcl_pose_x
-        self.init_y = self.amcl_pose_y
-        #self.init_odom_yaw = self.odom_orientation_yaw
-        #self.init_imu_yaw = self.imu_orientation_yaw
+        self.getBotPosition()
+        self.init_x = self.bot_pos_x 
+        self.init_y = self.bot_pos_y
+        self.init_dir = self.bot_dir
+        
+        bot_start_sec = self.scan_sec
+        bot_mode_stop_time = 0
         #rospy.loginfo("init_x: {}[m]".format(self.init_x))
         #rospy.loginfo("init_y: {}[m]".format(self.init_y))
-        #rospy.loginfo("init_yaw(odom): {}[rad]".format(self.init_odom_yaw))
-        #rospy.loginfo("init_yaw(imu): {}[rad]".format(self.init_imu_yaw))
-       
+        #rospy.loginfo("init_dir: {}[rad]".format(self.init_dir))
+
         route_state = 0
         self.goal_set_flag = 0
         active_flag = 0
         max_route_state = 30
-        while not rospy.is_shutdown():
-            #割込みでカメラ情報を読んで止まる
-            if self.S > 2000:
-                #twist = self.stop()
-                rospy.loginfo("--STOP Moving! Enemy Ahead!--")
-                #if active_flag == 1:
-                    #self.client.cancel_all_goals()
-                    #self.goal_set_flag = 0
 
-            else:
-                if self.my_side != "b":
-                    active_flag = self.Rotue_Strategy_1_redside(route_state)
-                else:
-                    active_flag = self.Rotue_Strategy_1_blueside(route_state)
+        self.is_bot_mode = BOT_MODE_PATROL
+        field_area = FIELD_AREA_RED_RD2
+        patrol_rote = PATROL_ROTE_CW
+        
+        is_stopped = False
+        dist_cnt = 0
+
+        while not rospy.is_shutdown():
+
+            if self.is_initialized_pose == False and (self.scan_sec - bot_start_sec) >= 20.0:
+                self.is_initialized_pose = True
+
+            if self.is_bot_mode == BOT_MODE_PATROL:
+
+                #割込みでカメラ情報を読んで止まる
+                if self.is_near_enemy == True or self.S > 2300:
+                    self.stop()
+                    if is_stopped == False:
+                        is_stopped = True
+                        bot_mode_stop_time = self.scan_sec
+
+                    if self.enemy_direction != None: 
+                        self.rotate(self.bot_dir + self.enemy_direction)
                 
-                if active_flag == 0:
-                    self.goal_set_flag = 0
-                    route_state += 1
-                    if route_state > max_route_state:
+                    rospy.loginfo("--STOP MODE--")
+                    if active_flag == 1 and self.goal_set_flag != 0:
+                        self.client.cancel_all_goals()
+                        self.goal_set_flag = 0
+
+                    if self.enemy_dist < 0.4:
+                        dist_cnt += 1
+
+                    if (self.scan_sec - bot_mode_stop_time) > 12 or dist_cnt > 30:
+                        bot_mode_stop_time = self.scan_sec
+                        self.is_bot_mode = BOT_MODE_RUNAWAY
+                        dist_cnt = 0
+                        active_flag = 0
+                        self.goal_set_flag = 0
+                        self.client.cancel_all_goals()
+                
+                else:
+                    is_stopped = False
+                    if route_state == 0:
+                        field_area = JudgeFieldArea(self.bot_pos_x, self.bot_pos_y)
+
+                    if self.my_side != "b":
+                        active_flag = self.Route_Strategy_2(field_area, route_state, patrol_rote)
+                        #active_flag = self.Route_Strategy_1_redside(route_state)
+                        #self.stop()
+                    else:
+                        active_flag = self.Route_Strategy_2(field_area, route_state, patrol_rote)
+                        #active_flag = self.Route_Strategy_1_blueside(route_state)
+                        #self.stop()
+                    if active_flag == 0:
+                        self.goal_set_flag = 0
+                        route_state += 1
+                        if route_state > max_route_state:
+                            route_state = 0
+                    elif active_flag < 0:
                         route_state = 0
+
+            elif self.is_bot_mode == BOT_MODE_RUNAWAY:
+                rospy.loginfo("--RUNAWAY MODE--") 
+                twist = Twist()
+                twist.linear.x = -BURGER_MAX_VELOCITY/3.0; twist.linear.y = 0; twist.linear.z = 0
+                twist.angular.x = 0; twist.angular.y = 0; twist.angular.z = 0
+                self.vel_pub.publish(twist)
+                if self.enemy_direction != None: 
+                        self.rotate(self.bot_dir + self.enemy_direction)
+
+                if (self.scan_sec - bot_mode_stop_time) > 2:
+                    self.is_bot_mode = BOT_MODE_PATROL
+                    patrol_rote *= -1
+                    route_state = 4
+                    
 
             #rospy.loginfo("odom pose_x: {}[m]".format(self.odom_pose_x))
             #rospy.loginfo("odom pose_y: {}[m]".format(self.odom_pose_y))
@@ -570,123 +907,185 @@ class TofuBot():
 
         #self.setGoal(self.init_x,self.init_y,self.init_odom_yaw)    #
 
-    def Rotue_Strategy_1_redside(self, state):        
-        if state == 0:
-            return self.setGoal(-0.9,-0.2,-PI/4) 
-            #return self.setGoal(0,0.9,PI/2) #for test
-        elif state == 1:
-            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_DOWN, 0.2)
-        elif state == 2:
-            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_DOWN)
-        elif state == 3:
-            return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,PI/2)
-        elif state == 4:
-            return self.setGoal(-0.53, 0, 0)
-        elif state == 5:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_DOWN)
-        elif state == 6:
-            return self.setGoal(0,-0.53, 0)
-        elif state == 7:        
-            return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_DOWN)
-        elif state == 8:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_RIGHT)
-        elif state == 9:
-            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP)
-        elif state == 10:
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_UP)
-        elif state == 11:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_LEFT)
-        elif state == 12:
-            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
-        elif state == 13:
-            return self.setGoal(0,0.53,PI)
-        elif state == 14:    
-            return self.setGoal(-0.53, 0,PI)
-        elif state == 15:
-            return self.setGoal(-0.90, 0,PI)
-        elif state == 16:
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN, 0.2)
-        elif state == 17:
-            return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/2)
-        else:
-            return 0
-
-    def Rotue_Strategy_1_blueside(self, state):        
-        if state == 0:
-            return self.setGoal(0.9,0.2,3*PI/4) 
-        elif state == 1:
-            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_UP, 0.2)
-        elif state == 2:
-            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
-        elif state == 3:
-            return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/2)
-        elif state == 4:
-            return self.setGoal(0.53, 0, PI)
-        elif state == 5:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_UP)
-        elif state == 6:
-            return self.setGoal(0, 0.53, PI)
-        elif state == 7:        
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_UP)
-        elif state == 8:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_LEFT)
-        elif state == 9:
-            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
-        elif state == 10:
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN)
-        elif state == 11:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_RIGHT)
-        elif state == 12:
-            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP)
-        elif state == 13:
-            return self.setGoal(0,-0.53, 0)
-        elif state == 14:    
-            return self.setGoal(0.53, 0, 0)
-        elif state == 15:
-            return self.setGoal(0.90, 0, 0)
-        elif state == 16:
-            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP, 0.2)
-        elif state == 17:
-            return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,PI/2)
-        else:
-            return 0
-
-    def Rotue_Strategy_2_redside(self, state):        
-        if state == 0:
-            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_DOWN)
-        elif state == 1:
-            return self.setGoal(CORNER_BLOCK_3_POS_X, CORNER_BLOCK_3_POS_Y - 0.25, 0)
-        elif state == 2:
-            return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_DOWN)
-        elif state == 3:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_RIGHT)
-        elif state == 4:
-            return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP)
-        elif state == 5:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_DOWN)
-        elif state == 6:
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN)
-        elif state == 7:        
-            return self.setGoal(CORNER_BLOCK_2_POS_X, CORNER_BLOCK_2_POS_Y + 0.25, 0)
-        elif state == 8:
-            return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_UP)
-        elif state == 9:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_LEFT)
-        elif state == 10:
-            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
-        elif state == 11:
-            return self.setGoal(CORNER_BLOCK_1_POS_X, CORNER_BLOCK_1_POS_Y + 0.25, 0)
-        elif state == 12:
-            return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_UP)
-        elif state == 13:
-            return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_UP)
-        elif state == 14:    
-            return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_UP)
-        elif state == 15:
-            return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/2)
-        else:
-            return 0
-
+    def Route_Strategy_2(self, field, state, pat_rote):
+        if   field == FIELD_AREA_RED_LD2 or field == FIELD_AREA_RED_RD2:        
+            if pat_rote == PATROL_ROTE_CCW:
+                if   state == 0:
+                    return self.setGoal(-0.95, -0.2,-PI/4)
+                elif state == 1:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_DOWN, 0.2)
+                elif state == 2:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_DOWN)
+                elif state == 3:
+                    return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,PI/2)
+                elif state == 4:
+                    return self.setGoal(-0.53, 0, 0)
+                elif state == 5:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_DOWN)
+                elif state == 6:
+                    return self.setGoal(0,-0.53, 0)
+                else:
+                    return -1
+            else: #PATROL_ROTE_CW
+                if   state == 0:
+                    return self.setGoal(-0.95, 0.2, PI/4)
+                elif state == 1:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN, 0.2)
+                elif state == 2:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN)
+                elif state == 3:
+                    return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/2)
+                elif state == 4:
+                    return self.setGoal(-0.53, 0, 0)
+                elif state == 5:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_DOWN)
+                elif state == 6:
+                    return self.setGoal(0, 0.53, 0)
+                else:
+                    return -1
+        elif field == FIELD_AREA_RED_LD1 or field == FIELD_AREA_RED_RD1:
+            if pat_rote == PATROL_ROTE_CCW:
+                if   state == 0:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_DOWN)
+                elif state == 1:
+                    return self.setGoal(0,-0.53, 0)
+                else:
+                    return -1
+            else: #PATROL_ROTE_CW
+                if   state == 0:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_DOWN)
+                elif state == 1:
+                    return self.setGoal(0, 0.53, 0)
+                else:
+                    return -1
+        elif field == FIELD_AREA_RED_RR2 or field == FIELD_AREA_RED_RR1 or field == FIELD_AREA_BLUE_RR2 or field == FIELD_AREA_BLUE_RR1:
+            if pat_rote == PATROL_ROTE_CCW:
+                if state == 0:
+                    return self.setGoal(0,-0.53, 0)
+                elif state == 1:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_DOWN)
+                elif state == 2:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_RIGHT)
+                elif state == 3:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP)
+                elif state == 4:
+                    return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/4)
+                elif state == 5:
+                    return self.setGoal(0.53-0.2,-0.53-0.5, 0)
+                elif state == 6:
+                    return self.setGoal(0.53+0.3,-0.53-0.05, PI/4)
+                elif state == 7:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_UP)
+                else:
+                    return -1
+            else: #PATROL_ROTE_CW
+                if state == 0:
+                    return self.setGoal(0,-0.53, PI)
+                elif state == 1:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_UP)
+                elif state == 2:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_RIGHT)
+                elif state == 3:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_DOWN)
+                elif state == 4:
+                    return self.setGoal(self.amcl_pose_x, self.amcl_pose_y, PI*3/4)
+                elif state == 5:
+                    return self.setGoal(-0.53+0.2, -0.53-0.5, PI)
+                elif state == 6:
+                    return self.setGoal(-0.53-0.3, -0.53-0.05, PI*3/4)
+                elif state == 7:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_3, MARKER_DOWN)
+                else:
+                    return -1
+        elif field == FIELD_AREA_BLUE_LU2 or field == FIELD_AREA_BLUE_RU2:        
+            if pat_rote == PATROL_ROTE_CCW:
+                if   state == 0:
+                    return self.setGoal( 0.95, 0.2, PI*3/4)
+                elif state == 1:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_UP, 0.2)
+                elif state == 2:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_UP)
+                elif state == 3:
+                    return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI/2)
+                elif state == 4:
+                    return self.setGoal( 0.53, 0, 0)
+                elif state == 5:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_UP)
+                elif state == 6:
+                    return self.setGoal(0, 0.53, 0)
+                else:
+                    return -1
+            else: #PATROL_ROTE_CW
+                if   state == 0:
+                    return self.setGoal( 0.95, -0.2, -PI*3/4)
+                elif state == 1:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_UP, 0.2)
+                elif state == 2:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_4, MARKER_UP)
+                elif state == 3:
+                    return self.setGoal(self.amcl_pose_x, self.amcl_pose_y, PI/2)
+                elif state == 4:
+                    return self.setGoal( 0.53, 0, 0)
+                elif state == 5:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_UP)
+                elif state == 6:
+                    return self.setGoal(0, -0.53, 0)
+                else:
+                    return -1
+        elif field == FIELD_AREA_BLUE_LU1 or field == FIELD_AREA_BLUE_RU1: 
+            if pat_rote == PATROL_ROTE_CCW: 
+                if   state == 0:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_UP)
+                elif state == 1:
+                    return self.setGoal(0, 0.53, 0)
+                else:
+                    return -1
+            else: #PATROL_ROTE_CW
+                if   state == 0:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_UP)
+                elif state == 1:
+                    return self.setGoal(0, -0.53, 0)
+                else:
+                    return -1
+        elif field == FIELD_AREA_RED_LL2 or field == FIELD_AREA_RED_LL1 or field == FIELD_AREA_BLUE_LL2 or field == FIELD_AREA_BLUE_LL1:
+            if pat_rote == PATROL_ROTE_CCW:
+                if state == 0:
+                    return self.setGoal(0, 0.53, PI)
+                elif state == 1:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_UP)
+                elif state == 2:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_LEFT)
+                elif state == 3:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
+                elif state == 4:
+                    return self.setGoal(self.amcl_pose_x, self.amcl_pose_y,-PI*3/4)
+                elif state == 5:
+                    return self.setGoal(-0.53+0.2, 0.53+0.5, PI)
+                elif state == 6:
+                    return self.setGoal(-0.53-0.3, 0.53+0.05, -PI*3/4)
+                elif state == 7:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_DOWN)
+                else:
+                    return -1
+            else: #PATROL_ROTE_CW
+                if state == 0:
+                    return self.setGoal(0, 0.53, 0)
+                elif state == 1:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_DOWN)
+                elif state == 2:
+                    return self.MoveToFieldMarker(CENTER_BLOCK, MARKER_LEFT)
+                elif state == 3:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_2, MARKER_UP)
+                elif state == 4:
+                    return self.setGoal(self.amcl_pose_x, self.amcl_pose_y, PI/4)
+                elif state == 5:
+                    return self.setGoal(0.53-0.2, 0.53+0.5, 0)
+                elif state == 6:
+                    return self.setGoal(0.53+0.3, 0.53+0.05, -PI/4)
+                elif state == 7:
+                    return self.MoveToFieldMarker(CORNER_BLOCK_1, MARKER_UP)
+                else:
+                    return -1
 
 if __name__ == '__main__':
     rospy.init_node('tofubot')
